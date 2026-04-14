@@ -1,55 +1,52 @@
-name: release
+name: Release
 
 on:
   push:
     tags:
-    - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
-
-env:
-  TAG: ${{ github.ref_name }}
-  REGISTRY: ghcr.io
-
-permissions:
-  contents: write # Allow to create a release.
+    - 'v*'
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  publish-image:
     permissions:
       contents: read
-      packages: write
+      id-token: write
+    runs-on: runs-on,runner=8cpu-linux-x64,run-id=${{ github.run_id }},image=ubuntu22-full-x64
     steps:
-    - name: Checkout
-      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
+    - name: Check out code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: "Read secrets"
+      uses: rancher-eio/read-vault-secrets@main
       with:
-        fetch-depth: 0
-    - name: setupGo
-      uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4
+        secrets: |
+          secret/data/github/repo/${{ github.repository }}/dockerhub/${{ github.repository_owner }}/credentials username | DOCKER_USERNAME ;
+          secret/data/github/repo/${{ github.repository }}/dockerhub/${{ github.repository_owner }}/credentials password | DOCKER_PASSWORD ;
+
+    - name: Push image
+      uses: rancher/ecm-distro-tools/actions/publish-image@master
       with:
-        go-version: '=1.21.3'
-    - name: Docker login
-      uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc # v2
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    - name: Build docker image
-      run: make docker-build-all TAG=${{ env.TAG }}
-    - name: Push docker image
-      run: make docker-push-all TAG=${{ env.TAG }}
+        image: aws-janitor
+        tag: ${{ github.ref_name }}
+        platforms: linux/amd64,linux/arm64
+
+        public-repo: rancher-sandbox
+        public-username: ${{ env.DOCKER_USERNAME }}
+        public-password: ${{ env.DOCKER_PASSWORD }}
+        make-target: push-image
+        push-to-prime: false
+
   release:
-    name: Create draft release
-    needs: build
+    name: Create release
+    needs: publish-image
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
-      - name: Set env
-        run: echo "RELEASE_TAG=${GITHUB_REF:10}" >> $GITHUB_ENV
-      - name: checkout code
-        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
-        with:
-          fetch-depth: 0
-      - name: Create draft GH release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create ${{ env.TAG }} --draft --generate-notes
+    - name: Check out code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        fetch-depth: 0
+    - name: Create GH release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: gh release create ${{ github.ref_name }} --generate-notes

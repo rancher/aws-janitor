@@ -17,14 +17,21 @@ export GO111MODULE=on
 # This option is for running docker manifest command
 export DOCKER_CLI_EXPERIMENTAL := enabled
 
+MACHINE := rancher
+
 TAG ?= dev
 ARCH ?= $(shell go env GOARCH)
 ALL_ARCH = amd64 arm64 s390x
+DEFAULT_PLATFORMS := linux/amd64,linux/arm64
 REGISTRY ?= ghcr.io
 ORG ?= rancher-sandbox
 ACTION_IMAGE_NAME ?= aws-janitor
 ACTION_IMG ?= $(REGISTRY)/$(ORG)/$(ACTION_IMAGE_NAME)
 MANIFEST_IMG ?= $(ACTION_IMG)-$(ARCH)
+
+REPO ?= rancher-sandbox
+IMAGE ?= aws-janitor
+IMAGE_NAME ?= $(REPO)/$(IMAGE):$(TAG)
 
 .PHONY: test
 test:
@@ -75,3 +82,27 @@ docker-build: docker-pull-prerequisites ## Run docker-build-* targets for all pr
 docker-list-all:
 	@echo $(CONTROLLER_IMG):${TAG}
 	@for arch in $(ALL_ARCH); do echo $(ACTION_IMG)-$${arch}:${TAG}; done
+
+## --------------------------------------
+## Buildx / publish-image targets
+## --------------------------------------
+
+.PHONY: buildx-machine
+buildx-machine: ## Create rancher buildx machine targeting DEFAULT_PLATFORMS.
+	@docker buildx ls | grep $(MACHINE) || \
+	  docker buildx create --name=$(MACHINE) --platform=$(DEFAULT_PLATFORMS)
+
+.PHONY: push-image
+push-image: ## Build and push multiarch image via docker buildx.
+	docker buildx build \
+	  $(IID_FILE_FLAG) \
+	  $(BUILDX_ARGS) \
+	  --platform=$(TARGET_PLATFORMS) \
+	  --tag $(IMAGE_NAME) \
+	  --push \
+	  .
+
+.PHONY: push-prime-image
+push-prime-image: ## Build and push multiarch image to prime registry with SBOM and provenance attestations.
+	BUILDX_ARGS="--sbom=true --attest type=provenance,mode=max" \
+	$(MAKE) push-image
